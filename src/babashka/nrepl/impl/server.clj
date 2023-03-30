@@ -7,18 +7,19 @@
    [clojure.pprint :as pprint]
    [clojure.reflect]
    [clojure.string :as str]
-   [sci.core :as sci])
+   )                                                ;;; [sci.core :as sci]
   (:import
-   [java.io
-    BufferedOutputStream
-    BufferedWriter
-    EOFException
-    InputStream
-    PrintWriter
+   [System.IO                                       ;;; java.io
+                                                    ;;; BufferedOutputStream
+                                                    ;;; BufferedWriter
+    EndOfStreamException                            ;;; EOFException
+    Stream                                          ;;; InputStream
+                                                    ;;; PrintWriter
     PushbackInputStream
     StringWriter
-    Writer]
-   [java.net ServerSocket]))
+    TextWriter]                                     ;;; Writer
+	clojure.lang.PushbackInputStream
+   [System.Net.Sockets Socket]))                    ;;; [java.net ServerSocket]
 
 (set! *warn-on-reflection* true)
 
@@ -29,7 +30,7 @@
   ^chars
   [x]
   (cond
-    (string? x) (.toCharArray ^String x)
+    (string? x) (.ToCharArray ^String x)                                   ;;; .toCharArray
     (integer? x) (char-array [(char x)])
     :else x))
 

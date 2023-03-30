@@ -3,8 +3,8 @@
    :no-doc true}
   (:refer-clojure :exclude [send])
   (:require [bencode.core :refer [write-bencode]]
-            [sci.core :as sci])
-  (:import [java.io Writer PrintWriter StringWriter OutputStream BufferedWriter]))
+            )                                      ;;; [sci.core :as sci]
+  (:import [System.IO Stream StringWriter]))                  ;;; [java.io Writer PrintWriter StringWriter OutputStream BufferedWriter]
 
 (set! *warn-on-reflection* true)
 
@@ -13,26 +13,26 @@
         id (get old-msg :id "unknown")]
     (assoc msg "session" session "id" id)))
 
-(defn send [^OutputStream os msg {:keys [debug-send]}]
+(defn send [^Stream os msg {:keys [debug-send]}]                        ;;; ^OutputStream
   (when debug-send (prn "Sending" msg))
   (write-bencode os msg)
-  (.flush os))
+  (.Flush os))                                                          ;;; .flush
 
-(defn send-exception [os msg ^Throwable ex {:keys [debug] :as opts}]
+(defn send-exception [os msg ^Exception ex {:keys [debug] :as opts}]    ;;; ^Throwable
   (let [d (ex-data ex)
         sci-error? (isa? (:type d) :sci/error)
         ex-name (when sci-error?
-                  (some-> ^Throwable (ex-cause ex)
-                          .getClass .getName))
+                  (some-> ^Object (ex-cause ex)                      ;;; ^Throwable
+                           .GetType .FullName))                              ;;;  .getClass .getName
         ex-map (Throwable->map ex)
         cause (:cause ex-map)
         {:keys [:file :line :column]} d
-        ns @sci/ns
+        ns ""                                                           ;;; @sci/ns  -- NO IDEA what this should be
         loc-str (str ns " "
                      (when line
                        (str (str (or file "REPL") ":")
                             line ":" column"")))
-        _strace (sci/stacktrace ex)]
+        _strace (.StackTrace ex)]                                       ;;; sci/stacktrace
     (when debug (prn "sending exception" ex-map))
     (send os (response-for msg {"err" (str ex-name
                                            (when cause (str ": " cause))
