@@ -1,0 +1,157 @@
+(ns sci.core)
+
+;; This is gives replacement for the sci.core functions called in babashka/nrepl.
+;; THis reduces the  amount of rewriting needed.
+
+
+;;sci/ns
+;;
+;;(def ns "SCI var that represents SCI's `clojure.core/*ns*`" utils/current-ns)
+;; in util:
+;;  (def current-ns
+;;    (dynamic-var '*ns* user-ns
+;;                 {:ns clojure-core-ns
+;;                  :doc "A sci.lang.Namespace object representing the current namespace."}))
+;;
+;; Let's just replace sci/ns with clojure.core/*ns* where it oc
+
+
+;; sci/file
+;;
+;; (def file "SCI var that represents SCI's `clojure.core/*file*`" utils/current-file)
+;;  in util:
+;; (def current-file
+;;   (dynamic-var '*file* nil
+;;                {:doc "The path of the file being evaluated, as a String.\n\n  When there is no file, e.g. in the REPL, the value is not defined."
+;;                 :ns clojure-core-ns}))
+;;
+;; Let's just replace this with clojure.core/*file*`
+
+
+;; sci/*1
+;; sci/*2
+;; sci/*3
+;; sci/*e
+;; (def *1 namespaces/*1)
+;; (def *2 namespaces/*2)
+;; (def *3 namespaces/*3)
+;; (def *e namespaces/*e)
+;; in namespaces:
+;;    (def *1 (copy-core-var *1))
+;;    (def *2 (copy-core-var *2))
+;;    (def *3 (copy-core-var *3))
+;;    (def *e (copy-core-var *e))
+;;
+;;  Just replace.
+
+;; sci/out
+;; sci/err
+;; (def in "SCI var that represents SCI's `clojure.core/*in*`" sio/in)
+;; (def out "SCI var that represents SCI's `clojure.core/*out*`" sio/out)
+;; In sci.impl.io:
+;; (def out (binding [*unrestricted* true]
+;;            (doto (core-dynamic-var '*out*)
+;;              (vars/unbind)
+;;              #?(:clj (alter-meta! assoc :doc "A java.io.Writer object representing standard output for print operations.")))))
+;; 
+;; (def err (binding [*unrestricted* true]
+;;            (doto (core-dynamic-var '*err*)
+;;              (vars/unbind)
+;;              #?(:clj (alter-meta! assoc :doc " A java.io.Writer object representing standard error for print operations.")))))
+;; 
+;; 
+;; Replace with *out* and *err*
+
+
+;; sci/eval-string*
+;;
+;; (defn eval-string*
+;;   "Evaluates string `s` in the context of `ctx` (as produced with
+;;   `init`)."
+;;   [ctx s]
+;;   (sci.impl.interpreter/eval-string* ctx s))
+;; in sci.impl.interpreter/eval-string*
+;;
+;; (defn eval-string* [ctx s]
+;;   (vars/with-bindings {utils/current-ns @utils/current-ns}
+;;     (let [reader (r/indexing-push-back-reader (r/string-push-back-reader s))]
+;;       (loop [ret nil]
+;;         (let [expr (p/parse-next ctx reader)]
+;;           (if (utils/kw-identical? p/eof expr)
+;;             ret
+;;             (let [ret (eval-form ctx expr)]
+;;               (recur ret))))))))
+;; This ends up calling borkdude/edamame's parse-next.
+;; returns a special (unique) value to indicate end-of-input.
+;; So it allows repeated reads from the string-push-back-reader.
+;; To distinguish end-of-input that is okay (after completing a read, rather than during a read)
+;; at the begining of a call it skips whitespace.
+;; it uses clojure.tools.reader.reader-types/StringReader and calls its peek-char.  This returns nil if no character is available.
+;; Suggests we should be using clojure.tools.reader to do the work here.
+;; Note the call to eval-form.  This is called elsewhere in nrepl.  Hoping we can just use eval.
+
+(defn eval-string [ctx x] )
+
+;;; sci/eval-form
+;; (defn eval-form
+;;   "Evaluates form (as produced by `parse-string` or `parse-next`) in the
+;;   context of `ctx` (as produced with `init`). To allow namespace
+;;   switches, establish root binding of `sci/ns` with `sci/binding` or
+;;   `sci/with-bindings.`"
+;;   [ctx form]
+;;   (let [ctx (assoc ctx :id (or (:id ctx) (gensym)))]
+;;     (i/eval-form ctx form)))
+	
+(defn eval-form [ctx form] (eval form))
+
+;; sci/binding
+;; sci/with-bindings
+;;
+;; just replace with clojure.core/binding and clojure.core/with-bindings
+
+;; sci/future
+;;
+;;      "Like clojure.core/future but also conveys sci bindings to the thread."
+;;
+;; Just replace with clojure.core/future
+
+;; sci/create-ns
+;;  "Creates namespace object. Can be used in var metadata."	
+;;
+;;  Replace with clojure.core/create-ns  ?
+
+;; sci/print-length
+;; (def print-length "SCI var that represents SCI's `clojure.core/*print-length*`" sio/print-length)
+;;
+;; Just replace with *print-length*`
+
+;; sci/stacktrace
+;;(defn stacktrace
+;;  "Returns list of stacktrace element maps from exception, if available."
+;;  [ex]
+;;  (some-> ex ex-data :sci.impl/callstack cs/stacktrace));;
+;;
+;; Pulls extra data from exception info map.  Need to look at this more closely.
+
+;; sci/reader
+;; (defn reader
+;;   "Coerces x into indexing pushback-reader to be used with
+;;   parse-next. Accepts: string or java.io.Reader."
+;;   [x]
+;;   (parser/reader x))
+;; from sci.impl.parser/reader
+;;   (defn reader [x]
+;;     (edamame/reader x))
+;; from edamame
+;; (defn reader
+;;   "Coerces x into indexing pushback-reader to be used with
+;;   parse-next. Accepts string or `java.io.Reader`"
+;;   [x]
+;;   (p/reader x))
+;; from edamame/impl/parser:
+;; (defn reader
+;;   [x]
+;;   #?(:clj (r/indexing-push-back-reader (r/push-back-reader x))  ...
+;; where r/ is clojure.tools.reader.reader-types.
+;;
+

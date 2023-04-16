@@ -8,8 +8,8 @@
             [clojure.edn :as edn]
             [clojure.string :as str]
             [clojure.test :as t :refer [deftest is testing]]
-            [sci.core :as sci])
-  (:import [java.net Socket]))
+            )                                                     ;;; [sci.core :as sci]
+  (:import [System.Net.Sockets TcpClient]))
 
 (def debug? false)
 
@@ -18,8 +18,10 @@
 ;; Test on a non standard port to minimize REPL interference
 (def nrepl-test-port 54345)
 
-(def dynvar (sci/new-dynamic-var '*x* 10))
-(def reflection-var (sci/new-dynamic-var '*warn-on-reflection* false))
+(def ^:dynamic *x* 10)
+ 
+;;(def dynvar (sci/new-dynamic-var '*x* 10))
+;;(def reflection-var (sci/new-dynamic-var '*warn-on-reflection* false))
 
 (def namespaces
   ;; fake namespaces for symbol completion tests
@@ -27,19 +29,16 @@
                    'somethingelse 'bar}
    'clojure.test {'deftest 'foo
                   'somethingelse 'bar
-                  '*x* dynvar}
-   'clojure.core {'*warn-on-reflection* reflection-var}})
+                  '*x* *x*}
+   'clojure.core {'*warn-on-reflection* *warn-on-reflection*}})
 
 (defn bytes->str [x]
-  (if (bytes? x) (String. (bytes x))
+  (if (bytes? x)  (.GetString System.Text.Encoding/Default (bytes x))
       (str x)))
 
 (defn read-msg [msg]
   (let [res (zipmap (map keyword (keys msg))
-                    (map #(if (bytes? %)
-                            (String. (bytes %))
-                            %)
-                         (vals msg)))
+                    (map bytes->str (vals msg)))
         res (if-let [status (:status res)]
               (assoc res :status (mapv bytes->str status))
               res)
@@ -63,11 +62,11 @@
 (defn read-eldoc [eldoc]
   (map #(map (comp edn/read-string bytes->str) %) eldoc))
 
-(defn nrepl-test [^Integer port]
-  (with-open [socket (Socket. "127.0.0.1" port)
-              in (.getInputStream socket)
-              in (java.io.PushbackInputStream. in)
-              os (.getOutputStream socket)]
+(defn nrepl-test [port]
+  (with-open [socket (TcpClient. "127.0.0.1" (int port))
+              in (.GetStream socket)
+              in (clojure.lang.PushbackInputStream. in)
+              os (.GetStream socket)]
     (bencode/write-bencode os {"op" "clone"})
     (let [session (:new-session (read-msg (bencode/read-bencode in)))
           id (atom 0)
@@ -418,18 +417,17 @@
 
 (deftest nrepl-server-test
   (let [service (atom nil)]
-    (sci/binding [dynvar 11]
+    (binding [*x* 11]
       (try
         (reset! service
                 (server/start-server!
-                 (sci/init {:namespaces namespaces
-                            :features #{:bb}})
-                 {:host "0.0.0.0"
+                 {:namespaces namespaces}
+                 {:host "127.0.0.1"
                   :port nrepl-test-port
                   :debug false
                   :debug-send false
                   :describe {"versions" {"babashka" "0.0.1"}}
-                  :thread-bind [reflection-var]}))
+                  :thread-bind ['*warn-on-reflection*]}))
         (test-utils/wait-for-port "localhost" nrepl-test-port)
         (nrepl-test nrepl-test-port)
         (finally
@@ -445,14 +443,14 @@
   "Returns sample config suitable for testing middleware."
   []
   (let [opts {}
-        ctx (-> (sci/init opts)
+        ctx (-> opts
                 (assoc :sessions (atom #{})))
-        bindings {sci/ns (sci/create-ns 'user nil)
-                  sci/print-length @sci/print-length
-                  sci/*1 nil
-                  sci/*2 nil
-                  sci/*3 nil
-                  sci/*e nil}]
+        bindings {'*ns* (create-ns 'user)
+                  '*print-length* *print-length*
+                  '*1 nil
+                  '*2 nil
+                  '*3 nil
+                  '*e nil}]
     {:ctx ctx
      :bindings bindings
      :opts opts}))
@@ -461,7 +459,7 @@
   "Given a sci context, bindings, and opts returns a vector of outputs produced by
   consuming with requests with xform."
   [ctx bindings opts xform requests]
-  (sci/with-bindings
+  (with-bindings
     bindings
     @(transduce (comp
                  (map (fn [msg]
@@ -479,7 +477,7 @@
   "Given a sci context, bindings, and opts return the next output produced by
   consuming msg with xform."
   [ctx bindings opts xform msg]
-  (sci/with-bindings
+  (with-bindings
     bindings
     ((xform #(do %2)) nil {:msg msg
                            :ctx ctx

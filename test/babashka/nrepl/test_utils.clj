@@ -1,9 +1,14 @@
 (ns babashka.nrepl.test-utils
   {:author "Michiel Borkent"}
-  (:require [clojure.java.io :as io])
-  (:import [java.net Socket ConnectException]))
+  (:require [clojure.clr.io :as io])
+  (:import [System.Net Dns IPEndPoint IPAddress]
+           [System.Net.Sockets TcpListener SocketException] ))
 
 (set! *warn-on-reflection* true)
+
+(defn current-time-millis []
+   (.ToUnixTimeMilliseconds DateTimeOffset/UtcNow))
+   
 
 (defn wait-for-port
   "Waits for TCP connection to be available on host and port. Options map
@@ -16,17 +21,20 @@
    (let [opts (merge {:host host
                       :port port}
                      opts)
-         t0 (System/currentTimeMillis)]
+         t0 (current-time-millis)
+		 host-entry (Dns/GetHostEntry ^String host)
+         ip-address (first (.AddressList host-entry))
+		 ip-endpoint (IPEndPoint. ^IPAddress ip-address (int port))]
      (loop []
-       (let [v (try (.close (Socket. host port))
-                    (- (System/currentTimeMillis) t0)
-                    (catch ConnectException _e
-                      (let [took (- (System/currentTimeMillis) t0)]
+       (let [v (try (.Stop (TcpListener. ip-endpoint))
+                    (- (current-time-millis) t0)
+                    (catch SocketException _e
+                      (let [took (- (current-time-millis) t0)]
                         (if (and timeout (>= took timeout))
                           :wait-for-port.impl/timed-out
                           :wait-for-port.impl/try-again))))]
          (cond (identical? :wait-for-port.impl/try-again v)
-               (do (Thread/sleep (or pause 100))
+               (do (System.Threading.Thread/Sleep (int (or pause 100)))
                    (recur))
                (identical? :wait-for-port.impl/timed-out v)
                default
@@ -43,21 +51,21 @@
   ([^String path {:keys [:default :timeout :pause] :as opts}]
    (let [opts (merge {:path path}
                      opts)
-         t0 (System/currentTimeMillis)]
+         t0 (current-time-millis)]
      (loop []
-       (let [v (when (not (.exists (io/file path)))
-                 (let [took (- (System/currentTimeMillis) t0)]
+       (let [v (when (not (.Exists (io/file-info path)))
+                 (let [took (- (current-time-millis) t0)]
                    (if (and timeout (>= took timeout))
                      :wait-for-path.impl/timed-out
                      :wait-for-path.impl/try-again)))]
          (cond (identical? :wait-for-path.impl/try-again v)
-               (do (Thread/sleep (or pause 100))
+               (do (System.Threading.Thread/Sleep (int (or pause 100)))
                    (recur))
                (identical? :wait-for-path.impl/timed-out v)
                default
                :else
                (assoc opts :took
-                 (- (System/currentTimeMillis) t0))))))))
+                 (- (current-time-millis) t0))))))))
 
 (comment
   (wait-for-port "localhost" 80)

@@ -79,7 +79,7 @@
                                         f)))
                             g)]
         (when (empty? next-deps)
-          (throw (IllegalArgumentException. "Middleware has cycles or missing dependencies!")))
+          (throw (ArgumentException. "Middleware has cycles or missing dependencies!")))
         (recur (conj deps next-deps)
                (reduce-kv (fn [g f deps]
                             (conj g [f (clojure.set/difference deps next-deps)]))

@@ -14,12 +14,12 @@
                                                     ;;; BufferedWriter
     EndOfStreamException                            ;;; EOFException
     Stream                                          ;;; InputStream
-                                                    ;;; PrintWriter
-    PushbackInputStream
+    StreamWriter                                    ;;; PrintWriter
+                                                    ;;; PushbackInputStream
     StringWriter
     TextWriter]                                     ;;; Writer
 	clojure.lang.PushbackInputStream
-   [System.Net.Sockets Socket]))                    ;;; [java.net ServerSocket]
+   [System.Net.Sockets Socket TcpListener TcpClient SocketException]))                    ;;; [java.net ServerSocket]
 
 (set! *warn-on-reflection* true)
 
@@ -35,29 +35,29 @@
     :else x))
 
 (defn make-writer [rf result msg stream-key]
-  (let [pw (-> (proxy [Writer] []
-                 (write
-                   ([x]
-                    (let [cbuf (to-char-array x)]
-                      (.write ^Writer this cbuf (int 0) (count cbuf))))
-                   ([x off len]
-                    (let [cbuf (to-char-array x)
-                          text (str (doto (StringWriter.)
-                                      (.write cbuf ^int off ^int len)))]
+  (let [pw (proxy [TextWriter] []
+				  (Write
+				    ([x]
+                     (let [cbuf (to-char-array x)]
+                       (.Write ^TextWriter this cbuf (int 0) (count cbuf)))) 
+					([x off len]
+					 (let [cbuf (to-char-array x)
+                           text (str (doto (StringWriter.)
+                                      (.Write cbuf ^int off ^int len)))]
                       (when (pos? (count text))
                         (rf result
-                            {:response-for msg
-                             :response {stream-key text}})))))
-                 (flush [])
-                 (close []))
-               (BufferedWriter. 1024)
-               (PrintWriter. true))]
+                          {:response-for msg
+                           :response {stream-key text}})))))
+				   (Flush [])
+				   (Close []))]
     pw))
-
-(defn the-sci-ns [ctx ns-sym]
-  (sci/eval-form ctx (list 'clojure.core/the-ns (list 'quote ns-sym))))
+							 
+(defn the-sci-ns [ns-sym]
+  (clojure.core/the-ns ns-sym))                   
+  ;;;(sci/eval-form ctx (list 'clojure.core/the-ns (list 'quote ns-sym))))
 
 ;; :nrepl.middleware.print/options {"right-margin" 120, "length" 50, "level" 10}
+
 
 (defn format-value [nrepl-pprint debug v msg]
   (if nrepl-pprint
@@ -75,7 +75,7 @@
 
 (defn eval-msg [rf result {:keys [ctx msg opts]}]
   (try
-    (let [ctx (assoc ctx :main-thread-id (.getId (Thread/currentThread)))
+    (let [ctx (assoc ctx :main-thread-id (.ManagedThreadId (System.Threading.Thread/CurrentThread)))
           debug (:debug opts)
           code-str (get msg :code)
           load-file? (:load-file msg)
@@ -83,33 +83,33 @@
                  (or (:file-path msg)
                      (:file-name msg))
                  (:file msg))
-          reader (sci/reader code-str)
+          reader (utils/reader code-str)
           ns-str (get msg :ns)
-          sci-ns (when ns-str (the-sci-ns ctx (symbol ns-str)))
+          sci-ns (when ns-str (the-sci-ns #_ctx (symbol ns-str)))
           nrepl-pprint (:nrepl.middleware.print/print msg)
           _ (when (:debug opts)
               (prn :msg msg))
           err-pw (make-writer rf result msg "err")
           out-pw (make-writer rf result msg "out")]
-      (when debug (println "current ns" (str @sci/ns)))
-      (sci/with-bindings (cond-> {sci/*1 *1
-                                  sci/*2 *2
-                                  sci/*3 *3
-                                  sci/*e *e
-                                  sci/out out-pw
-                                  sci/err err-pw}
-                           file (assoc sci/file file)
-                           load-file? (assoc sci/ns @sci/ns)
-                           sci-ns (assoc sci/ns sci-ns))
+      (when debug (println "current ns" (str *ns*)))
+      (with-bindings (cond-> {'*1 *1
+                              '*2 *2
+                              '*3 *3
+                              '*e *e
+                              '*out* out-pw
+                              '*err* err-pw}
+                       file (assoc '*file* file)
+                       load-file? (assoc '*ns* *ns*)
+                       sci-ns (assoc '*ns* sci-ns))
         (let [last-val
               (loop [last-val nil]
-                (let [form (sci/parse-next ctx reader)
-                      eof? (identical? :sci.core/eof form)]
+                (let [form (utils/parse-next ctx reader)
+                      eof? (identical? :utils/eof form)]
                   (if-not eof?
                     (let [value (when-not eof?
-                                  (let [result (sci/eval-form ctx form)]
-                                    (.flush ^Writer out-pw)
-                                    (.flush ^Writer err-pw)
+                                  (let [result (eval ctx form)]
+                                    (.Flush ^TextWriter out-pw)
+                                    (.Flush ^TextWriter err-pw)
                                     result))]
                       (when-not load-file?
                         (set! *3 *2)
@@ -117,7 +117,7 @@
                         (set! *1 value)
                         (rf result
                             {:response-for msg
-                             :response {"ns" (str @sci/ns)
+                             :response {"ns" (str *ns*)
                                         "value" (format-value nrepl-pprint debug value msg)}
                              :opts opts}))
                       (recur value))
@@ -131,7 +131,7 @@
           {:response-for msg
            :response {"status" #{"done"}}
            :opts opts}))
-    (catch Throwable ex
+    (catch Exception ex
       (set! *e ex)
       (rf result
           {:response-for msg
@@ -139,14 +139,14 @@
            :opts opts}))))
 
 (defn fully-qualified-syms [ctx ns-sym]
-  (let [syms (sci/eval-string* ctx (format "(keys (ns-map '%s))" ns-sym))
+  (let [syms (utils/eval-string* (format "(keys (ns-map '%s))" ns-sym))
         sym-strs (map #(str "`" %) syms)
         sym-expr (str "[" (str/join " " sym-strs) "]")
-        syms (sci/eval-string* ctx sym-expr)]
+        syms (utils/eval-string* sym-expr)]
     syms))
 
 (defn match [_alias->ns ns->alias query [sym-ns sym-name qualifier]]
-  (let [pat (re-pattern (java.util.regex.Pattern/quote query))]
+  (let [pat (re-pattern (System.Text.RegularExpressions.Regex/Escape query))]
     (or (when (and (identical? :unqualified qualifier) (re-find pat sym-name))
           [sym-ns sym-name])
         (when sym-ns
@@ -157,11 +157,11 @@
 
 (defn ns-imports->completions [ctx query-ns query]
   (let [[ns-part name-part] (str/split query #"/")
-        resolved (sci/eval-string* ctx
+        resolved (utils/eval-string* 
                                    (pr-str `(let [resolved# (resolve '~query-ns)]
                                               (when-not (var? resolved#)
                                                 resolved#))))
-        pat (when name-part (re-pattern (java.util.regex.Pattern/quote name-part)))]
+        pat (when name-part (re-pattern (System.Text.RegularExpressions.Regex/Escape name-part)))]
     (when
         resolved
         (->>
@@ -181,7 +181,7 @@
                (if parameter-types "static-method" "static-field")]))))))))
 
 (defn import-symbols->completions [imports query]
-  (let [pat (re-pattern (java.util.regex.Pattern/quote query))]
+  (let [pat (re-pattern (System.Text.RegularExpressions.Regex/Escape query))]
     (doall
      (sequence
       (comp
@@ -199,34 +199,34 @@
     (let [ns-str (get msg :ns)
           sci-ns (when ns-str
                    (the-sci-ns ctx (symbol ns-str)))]
-      (sci/binding [sci/ns (or sci-ns @sci/ns)]
+      (binding [*ns* (or sci-ns *ns*)]
         (if-let [query (or (:symbol msg)
                            (:prefix msg))]
           (let [has-namespace? (str/includes? query "/")
                 query-ns (when has-namespace? (symbol (first (str/split query #"/"))))
-                from-current-ns (fully-qualified-syms ctx (sci/eval-string* ctx "(ns-name *ns*)"))
+                from-current-ns (fully-qualified-syms ctx (utils/eval-string* "(ns-name *ns*)"))
                 from-current-ns (map (fn [sym]
                                        [(namespace sym) (name sym) :unqualified])
                                      from-current-ns)
-                alias->ns (sci/eval-string* ctx "(let [m (ns-aliases *ns*)] (zipmap (keys m) (map ns-name (vals m))))")
+                alias->ns (utils/eval-string* ctx "(let [m (ns-aliases *ns*)] (zipmap (keys m) (map ns-name (vals m))))")
                 ns->alias (zipmap (vals alias->ns) (keys alias->ns))
                 from-aliased-nss (doall (mapcat
                                          (fn [alias]
                                            (let [ns (get alias->ns alias)
-                                                 syms (sci/eval-string* ctx (format "(keys (ns-publics '%s))" ns))]
+                                                 syms (utils/eval-string*(format "(keys (ns-publics '%s))" ns))]
                                              (map (fn [sym]
                                                     [(str ns) (str sym) :qualified])
                                                   syms)))
                                          (keys alias->ns)))
-                all-namespaces (->> (sci/eval-string* ctx (format "(all-ns)"))
+                all-namespaces (->> (utils/eval-string* (format "(all-ns)"))
                                     (map (fn [ns]
                                            [(str ns) nil :qualified])))
                 from-imports (when query-ns (ns-imports->completions ctx (symbol query-ns) query))
-                ns-found? (sci/eval-string* ctx (format "(find-ns '%s)" query-ns))
+                ns-found? (utils/eval-string* (format "(find-ns '%s)" query-ns))
                 fully-qualified-names (when-not from-imports
                                         (when (and has-namespace? ns-found?)
                                           (let [ns (get alias->ns query-ns query-ns)
-                                                syms (sci/eval-string* ctx (format "(keys (ns-publics '%s))" ns))]
+                                                syms (utils/eval-string* (format "(keys (ns-publics '%s))" ns))]
                                             (map (fn [sym]
                                                    [(str ns) (str sym) :qualified])
                                                  syms))))
@@ -254,7 +254,7 @@
               {:response-for msg
                :response {"status" #{"done"}}
                :opts opts}))))
-    (catch Throwable e
+    (catch Exception e
       (println e)
       (rf result
           {:response-for msg
@@ -291,8 +291,8 @@
     (try
       (let [sci-ns (when ns-str
                      (the-sci-ns ctx (symbol ns-str)))]
-        (sci/binding [sci/ns (or sci-ns @sci/ns)]
-          (let [m (sci/eval-string* ctx (format "
+        (binding [*ns* (or sci-ns *ns*)]
+          (let [m (utils/eval-string*  (format "
 (let [ns '%s
       full-sym '%s]
   (when-let [v (ns-resolve ns full-sym)]
@@ -326,7 +326,7 @@
             (rf result {:response reply
                         :response-for msg
                         :opts opts}))))
-      (catch Throwable e
+      (catch Exception e
         (when debug (println e))
         (let [status (cond-> #{"done"}
                        (= mapping-type :eldoc)
@@ -339,7 +339,7 @@
 (defn read-msg [msg]
   (-> (zipmap (map keyword (keys msg))
               (map #(if (bytes? %)
-                      (String. (bytes %))
+                      (.GetString System.Text.Encoding/ASCII (bytes %))  ;;; -- do we want some other encoding?
                       %) (vals msg)))
       (update :op keyword)))
 
@@ -352,7 +352,7 @@
 
 (defmethod process-msg :clone [rf result {:keys [ctx msg opts] :as m}]
   (when (:debug opts) (println "Cloning!"))
-  (let [id (str (java.util.UUID/randomUUID))]
+  (let [id (str (System.Guid.))]
     (swap! (:sessions ctx) (fnil conj #{}) id)
     (rf result {:response {"new-session" id "status" #{"done"}}
                 :response-for msg
@@ -409,9 +409,9 @@
        :opts opts}))
 
 (defn session-loop [rf is os {:keys [ctx opts id] :as m} ]
-  (when (:debug opts) (println "Reading!" id (.available ^InputStream is)))
+  (when (:debug opts) (println "Reading!" id))
   (when-let [msg (try (read-bencode is)
-                      (catch EOFException _
+                      (catch EndOfStreamException _
                         (when-not (:quiet opts)
                           (println "Client closed connection."))))]
     (let [response (rf os {:msg msg
@@ -425,29 +425,26 @@
     (utils/send os (:response response) (:opts response)))
   os)
 
-(defn listen [ctx ^ServerSocket listener {:keys [debug thread-bind xform] :as opts}]
+(defn listen [ctx ^TcpListener listener {:keys [debug thread-bind xform] :as opts}]
   (when debug (println "Listening"))
-  (let [client-socket (.accept listener)
-        in (.getInputStream client-socket)
+  (let [^TcpClient client-socket 
+          (try 
+		    (.AcceptTcpClient listener)
+			(catch SocketException _ 
+			  nil))
+        in (.GetStream client-socket)
         in (PushbackInputStream. in)
-        out (.getOutputStream client-socket)
-        out (BufferedOutputStream. out)
+        out (.GetStream client-socket)
+        out (StreamWriter. out)
         rf (xform send-reduce)]
     (when debug (println "Connected."))
-    (sci/future
+    (future
       (binding [*1 nil
                 *2 nil
                 *3 nil
-                *e nil]
-        (sci/with-bindings
-          (merge {sci/ns (sci/create-ns 'user nil)
-                  sci/print-length @sci/print-length
-                  sci/*1 nil
-                  sci/*2 nil
-                  sci/*3 nil
-                  sci/*e nil}
-                 (zipmap thread-bind (map deref thread-bind)))
+                *e nil
+				*ns* (create-ns 'user)]
           (session-loop rf in out {:opts opts
                                    :id "pre-init"
-                                   :ctx ctx}))))
+                                   :ctx ctx})))
     (recur ctx listener opts)))
