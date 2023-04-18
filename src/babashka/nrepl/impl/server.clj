@@ -100,7 +100,8 @@
         (let [last-val
               (loop [last-val nil]
                 (let [form (utils/parse-next #_ctx reader)
-                      eof? (identical? :utils/eof form)]
+                      eof? (identical? utils/eof form)]
+				  (.WriteLine System.Console/Error (pr-str "eval-msg loop:" form ", " eof?))	  
                   (if-not eof?
                     (let [value (when-not eof?
                                   (let [result (eval form)]
