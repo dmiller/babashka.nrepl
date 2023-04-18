@@ -82,20 +82,10 @@
 (def colon 58)
 
 (defn #^{:private true} read-byte
-  #^long [#^PushbackInputStream input]                                                      ;;; #^InputStream
+  #^long [#^Stream input]                                                                  ;;; #^InputStream
   (let [c (.ReadByte input)]                                                                ;;; .read
     (when (neg? c)
       (throw (EndOfStreamException. "Invalid netstring. Unexpected end of input.")))        ;;; EOFException.
-    ;; Here we have a quirk for example. `.read` returns -1 on end of
-    ;; input. However the Java `Byte` has only a range from -128 to 127.
-    ;; How does the fit together?
-    ;;
-    ;; The whole thing is shifted. `.read` actually returns an int
-    ;; between zero and 255. Everything below the value 128 stands
-    ;; for itself. But larger values are actually negative byte values.
-    ;;
-    ;; So we have to do some translation here. `Byte/byteValue` would
-    ;; do that for us, but we want to avoid boxing here.
     c ))                                                                                 ;;; not a problem for CLR: (if (< 127 c) (- c 256) c)
 
 (defn #^{:private true :tag |System.Byte[]|} read-bytes                                  ;;; :tag "[B"
@@ -110,7 +100,17 @@
             "Invalid netstring. Less data available than expected.")))
         (when (not= result len)
           (recur (+ offset result) (- len result)))))
-    content))
+	content))
+
+
+;;    (println "read-bytes: trying to read " n " bytes")
+;;    (try 
+;;	   (.ReadExactly input content 0 (int n))
+;;       (catch EndOfStreamException eos
+;;           (throw (EndOfStreamException. "Invalid netstring. Less data available than expected." eos))))
+;;    (println "read-bytes: read " n " bytes: " content)
+;;    content))
+
 
 ;; `read-long` is used for reading integers from the stream as well
 ;; as the byte count prefixes of byte strings. The delimiter is \:
@@ -151,7 +151,7 @@
          #^String string<payload)
 
 (defn #^{:private true} read-netstring*
-  [input]
+  [input] 
   (read-bytes input (read-long input colon)))
 
 ;; And the public facing API: `read-netstring`.
@@ -246,7 +246,7 @@
                  (.Unread input (byte ch))                                               ;;; (.unread input (int ch))
                  (read-netstring* input)))))
 
-;; To read the bencode encoded data we walk a long the sequence of tokens
+;; To read the bencode encoded data we walk along the sequence of tokens
 ;; and act according to the found tags.
 
 (declare read-integer read-list read-map)

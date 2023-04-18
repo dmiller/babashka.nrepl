@@ -32,23 +32,24 @@
   (cond
     (string? x) (.ToCharArray ^String x)                                   ;;; .toCharArray
     (integer? x) (char-array [(char x)])
+	(char? x) (char-array [(char x)])                                      ;;; had to add this clause
     :else x))
 
 (defn make-writer [rf result msg stream-key]
-  (let [pw (proxy [TextWriter] []
+  (let [sw (StringWriter.)
+        pw (proxy [TextWriter] []
 				  (Write
-				    ([x]
-                     (let [cbuf (to-char-array x)]
-                       (.Write ^TextWriter this cbuf (int 0) (count cbuf)))) 
-					([x off len]
-					 (let [cbuf (to-char-array x)
-                           text (str (doto (StringWriter.)
-                                      (.Write cbuf ^int off ^int len)))]
-                      (when (pos? (count text))
+				    ([x] 
+					 (if (char? x)
+					      (.Write sw (char x))   ;; special case the most-used overload
+						  (.Write sw x))))       ;; rely on reflection for the rest
+				   (Flush []  
+				     (let [ text (str sw)]
+					   (.Clear (.GetStringBuilder sw))
+					   (when (pos? (count text))
                         (rf result
                           {:response-for msg
-                           :response {stream-key text}})))))
-				   (Flush [])
+                           :response {stream-key text}}))))
 				   (Close []))]
     pw))
 							 
@@ -75,6 +76,7 @@
 
 (defn eval-msg [rf result {:keys [ctx msg opts]}]
   (try
+    (.WriteLine System.Console/Error (pr-str "eval-msg: " msg))
     (let [ctx (assoc ctx :main-thread-id (.ManagedThreadId (System.Threading.Thread/CurrentThread)))
           debug (:debug opts)
           code-str (get msg :code)
@@ -85,29 +87,23 @@
                  (:file msg))
           reader (utils/reader code-str)
           ns-str (get msg :ns)
-          sci-ns (when ns-str (the-sci-ns #_ctx (symbol ns-str)))
+          sci-ns (if ns-str (the-sci-ns (symbol ns-str)) *ns*)
           nrepl-pprint (:nrepl.middleware.print/print msg)
           _ (when (:debug opts)
               (prn :msg msg))
           err-pw (make-writer rf result msg "err")
           out-pw (make-writer rf result msg "out")]
       (when debug (println "current ns" (str *ns*)))
-      (with-bindings (cond-> {'*1 *1
-                              '*2 *2
-                              '*3 *3
-                              '*e *e
-                              '*out* out-pw
-                              '*err* err-pw}
-                       file (assoc '*file* file)
-                       load-file? (assoc '*ns* *ns*)
-                       sci-ns (assoc '*ns* sci-ns))
+	  (binding [*out* out-pw 
+	            *err* err-pw
+				*ns* sci-ns]
         (let [last-val
               (loop [last-val nil]
-                (let [form (utils/parse-next ctx reader)
+                (let [form (utils/parse-next #_ctx reader)
                       eof? (identical? :utils/eof form)]
                   (if-not eof?
                     (let [value (when-not eof?
-                                  (let [result (eval ctx form)]
+                                  (let [result (eval form)]
                                     (.Flush ^TextWriter out-pw)
                                     (.Flush ^TextWriter err-pw)
                                     result))]
@@ -199,7 +195,6 @@
     (let [ns-str (get msg :ns)
           sci-ns (when ns-str
                    (the-sci-ns ctx (symbol ns-str)))]
-      (binding [*ns* (or sci-ns *ns*)]
         (if-let [query (or (:symbol msg)
                            (:prefix msg))]
           (let [has-namespace? (str/includes? query "/")
@@ -253,7 +248,7 @@
           (rf result
               {:response-for msg
                :response {"status" #{"done"}}
-               :opts opts}))))
+               :opts opts})))
     (catch Exception e
       (println e)
       (rf result
@@ -291,7 +286,6 @@
     (try
       (let [sci-ns (when ns-str
                      (the-sci-ns ctx (symbol ns-str)))]
-        (binding [*ns* (or sci-ns *ns*)]
           (let [m (utils/eval-string*  (format "
 (let [ns '%s
       full-sym '%s]
@@ -325,7 +319,7 @@
                                           line (assoc "line" line)))]
             (rf result {:response reply
                         :response-for msg
-                        :opts opts}))))
+                        :opts opts})))
       (catch Exception e
         (when debug (println e))
         (let [status (cond-> #{"done"}
@@ -339,7 +333,7 @@
 (defn read-msg [msg]
   (-> (zipmap (map keyword (keys msg))
               (map #(if (bytes? %)
-                      (.GetString System.Text.Encoding/ASCII (bytes %))  ;;; -- do we want some other encoding?
+                      (.GetString System.Text.Encoding/UTF8 (bytes %))  ;;; -- do we want some other encoding?
                       %) (vals msg)))
       (update :op keyword)))
 
@@ -352,7 +346,7 @@
 
 (defmethod process-msg :clone [rf result {:keys [ctx msg opts] :as m}]
   (when (:debug opts) (println "Cloning!"))
-  (let [id (str (System.Guid.))]
+  (let [id (str (System.Guid/NewGuid))]
     (swap! (:sessions ctx) (fnil conj #{}) id)
     (rf result {:response {"new-session" id "status" #{"done"}}
                 :response-for msg
@@ -362,7 +356,9 @@
   (close-session rf result m))
 
 (defmethod process-msg :eval [rf result m]
-  (eval-msg rf result m))
+  (let [x  (eval-msg rf result m)]
+    (.WriteLine System.Console/Error (pr-str "process-message :eval returns " x))
+	x))
 
 (defmethod process-msg :load-file [rf result {:keys [ctx msg opts] :as m}]
   (let [file (:file msg)
@@ -410,10 +406,12 @@
 
 (defn session-loop [rf is os {:keys [ctx opts id] :as m} ]
   (when (:debug opts) (println "Reading!" id))
+  (.WriteLine System.Console/Error (pr-str "Reading! " id))
   (when-let [msg (try (read-bencode is)
                       (catch EndOfStreamException _
                         (when-not (:quiet opts)
                           (println "Client closed connection."))))]
+	(.WriteLine System.Console/Error (pr-str "session-loop, msg = " msg))
     (let [response (rf os {:msg msg
                            :opts opts
                            :ctx ctx})])
@@ -432,10 +430,8 @@
 		    (.AcceptTcpClient listener)
 			(catch SocketException _ 
 			  nil))
-        in (.GetStream client-socket)
-        in (PushbackInputStream. in)
+        in (PushbackInputStream. (.GetStream client-socket))
         out (.GetStream client-socket)
-        out (StreamWriter. out)
         rf (xform send-reduce)]
     (when debug (println "Connected."))
     (future

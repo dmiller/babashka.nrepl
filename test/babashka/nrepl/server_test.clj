@@ -33,12 +33,15 @@
    'clojure.core {'*warn-on-reflection* *warn-on-reflection*}})
 
 (defn bytes->str [x]
-  (if (bytes? x)  (.GetString System.Text.Encoding/Default (bytes x))
+  (if (bytes? x)  (.GetString System.Text.Encoding/UTF8 (bytes x))
       (str x)))
 
 (defn read-msg [msg]
   (let [res (zipmap (map keyword (keys msg))
-                    (map bytes->str (vals msg)))
+                    (map #(if (bytes? %)
+                            (.GetString System.Text.Encoding/UTF8 (bytes %))
+                            %)
+                         (vals msg)))
         res (if-let [status (:status res)]
               (assoc res :status (mapv bytes->str status))
               res)
@@ -67,6 +70,7 @@
               in (.GetStream socket)
               in (clojure.lang.PushbackInputStream. in)
               os (.GetStream socket)]
+    (println "TEST: op clone")
     (bencode/write-bencode os {"op" "clone"})
     (let [session (:new-session (read-msg (bencode/read-bencode in)))
           id (atom 0)
@@ -74,6 +78,7 @@
       (testing "session"
         (is session))
       (testing "describe"
+	    (println "TEST: op describe")
         (bencode/write-bencode os {"op" "describe" "session" session "id" (new-id!)})
         (let [msg (read-reply in session @id)
               id (:id msg)
@@ -84,6 +89,7 @@
           (is (= "0.0.1" babashka-version))
           (is (= babashka-nrepl-version bb-nrepl-ver))))
       (testing "eval"
+	    (println "TEST: op eval (+ 1 2 3)")
         (bencode/write-bencode os {"op" "eval" "code" "(+ 1 2 3)" "session" session "id" (new-id!)})
         (let [msg (read-reply in session @id)
               id (:id msg)
@@ -91,14 +97,17 @@
           (is (= 2 id))
           (is (= value "6")))
         (testing "REPL variables"
+		  (println "TEST: op evel (* 2 8)")
           (bencode/write-bencode os {"op" "eval" "code" "(* 2 8)" "session" session "id" (new-id!)})
           (let [msg (read-reply in session @id)
                 value (:value msg)]
             (is (= value "16")))
+		  (println "TEST: op eval [*2 *1]")
           (bencode/write-bencode os {"op" "eval" "code" "[*2 *1]" "session" session "id" (new-id!)})
           (let [msg (read-reply in session @id)
                 value (:value msg)]
             (is (= "[6 16]" value ))))
+		(println "TEST: op eval (do (require '[clojure.test :refer [*x*]]) *x*)")
         (bencode/write-bencode os {"op" "eval"
                                    "code" "(do (require '[clojure.test :refer [*x*]]) *x*)"
                                    "session" session "id" (new-id!)})
@@ -106,12 +115,14 @@
               value (:value msg)]
           (is (= value "11")))
         (testing "creating a namespace and evaluating something in it"
+		  (println "TEST: op eval ns defn defn")
           (bencode/write-bencode os {"op" "eval"
                                      "code" "(ns ns0) (defn foo [] :foo0) (ns ns1) (defn foo [] :foo1)"
                                      "session" session
                                      "id" (new-id!)})
           (read-reply in session @id)
           (testing "not providing the ns key evaluates in the last defined namespace"
+		    (println "TEST: op eval (foo)")
             (bencode/write-bencode os {"op" "eval" "code" "(foo)" "session" session "id" (new-id!)})
             (is (= ":foo1" (:value (read-reply in session @id)))))
           (testing "explicitly providing the ns key evaluates in that namespace"
@@ -445,12 +456,12 @@
   (let [opts {}
         ctx (-> opts
                 (assoc :sessions (atom #{})))
-        bindings {'*ns* (create-ns 'user)
-                  '*print-length* *print-length*
-                  '*1 nil
-                  '*2 nil
-                  '*3 nil
-                  '*e nil}]
+        bindings {#'*ns* (create-ns 'user)
+                  #'*print-length* *print-length*
+                  #'*1 nil
+                  #'*2 nil
+                  #'*3 nil
+                  #'*e nil}]
     {:ctx ctx
      :bindings bindings
      :opts opts}))

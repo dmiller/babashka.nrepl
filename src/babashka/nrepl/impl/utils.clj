@@ -70,7 +70,7 @@
 
 
 (defn parse-next
-  [ reader]
+  [reader]
   (if-let [c (and (skip-whitespace reader)
                      (rt/peek-char reader))]
 	(ctr/read reader)
