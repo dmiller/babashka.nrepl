@@ -80,7 +80,7 @@
 ;; this is taken from sci.impl.interpreter/eval-string*
 
 (defn eval-string* [s]
-  (with-bindings {*ns* *ns*} 
+  (with-bindings {#'*ns* *ns*} 
     (let [reader (reader s)]
       (loop [ret nil]
         (let [expr (parse-next reader)]

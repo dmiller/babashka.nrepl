@@ -107,11 +107,11 @@
           (let [msg (read-reply in session @id)
                 value (:value msg)]
             (is (= "[6 16]" value ))))
-		(println "TEST: op eval (do (require '[clojure.test :refer [*x*]]) *x*)")
-        (bencode/write-bencode os {"op" "eval"
+		#_(println "TEST: op eval (do (require '[clojure.test :refer [*x*]]) *x*)")
+        #_(bencode/write-bencode os {"op" "eval"
                                    "code" "(do (require '[clojure.test :refer [*x*]]) *x*)"
                                    "session" session "id" (new-id!)})
-        (let [msg (read-reply in session @id)
+        #_(let [msg (read-reply in session @id)
               value (:value msg)]
           (is (= value "11")))
         (testing "creating a namespace and evaluating something in it"

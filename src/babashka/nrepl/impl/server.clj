@@ -53,7 +53,7 @@
 				   (Close []))]
     pw))
 							 
-(defn the-sci-ns [ns-sym]
+(defn the-sci-ns [ctx ns-sym]
   (clojure.core/the-ns ns-sym))                   
   ;;;(sci/eval-form ctx (list 'clojure.core/the-ns (list 'quote ns-sym))))
 
@@ -106,8 +106,9 @@
 	    (do 
 		  (with-bindings (cond-> {#'*out* out-pw
                                   #'*err* err-pw}
-		   		           ns-str (assoc #'*ns* explicit-ns)
-			  		       file (assoc #'*file* file))								
+			  		       file (assoc #'*file* file)
+						   load-file? (assoc #'*ns* *ns*)
+		   		           ns-str (assoc #'*ns* explicit-ns))								
             (let [last-val
                   (loop [last-val nil]
                    (let [form (utils/parse-next #_ctx reader)
@@ -151,9 +152,14 @@
         sym-strs (map #(str "`" %) syms)
         sym-expr (str "[" (str/join " " sym-strs) "]")
         syms (utils/eval-string* sym-expr)]
+	(.WriteLine System.Console/Error (pr-str "fully-qualified-syms, ns-sym = " ns-sym))
+	(.WriteLine System.Console/Error (pr-str "fully-qualified-syms, syms = " syms))
+	
     syms))
 
 (defn match [_alias->ns ns->alias query [sym-ns sym-name qualifier]]
+
+  (let [x 
   (let [pat (re-pattern (System.Text.RegularExpressions.Regex/Escape query))]
     (or (when (and (identical? :unqualified qualifier) (re-find pat sym-name))
           [sym-ns sym-name])
@@ -161,7 +167,10 @@
           (or (when (re-find pat (str (get ns->alias (symbol sym-ns)) "/" sym-name))
                 [sym-ns (str (get ns->alias (symbol sym-ns)) "/" sym-name)])
               (when (re-find pat (str sym-ns "/" sym-name))
-                [sym-ns (str sym-ns "/" sym-name)]))))))
+                [sym-ns (str sym-ns "/" sym-name)])))))]
+	 (when x 
+	   (.WriteLine System.Console/Error (pr-str "match: " x " from: " ns->alias ", " query ", " sym-ns ", " sym-name ", " qualifier)))			
+				x))
 
 (defn ns-imports->completions [ctx query-ns query]
   (let [[ns-part name-part] (str/split query #"/")
@@ -207,16 +216,24 @@
     (let [ns-str (get msg :ns)
           sci-ns (when ns-str
                    (the-sci-ns ctx (symbol ns-str)))]
+		(.WriteLine System.Console/Error (pr-str "complete:  ns-str = " ns-str ", sci-ns = " sci-ns))	 
+      (binding [*ns* (or sci-ns *ns*)]		
         (if-let [query (or (:symbol msg)
                            (:prefix msg))]
           (let [has-namespace? (str/includes? query "/")
                 query-ns (when has-namespace? (symbol (first (str/split query #"/"))))
-                from-current-ns (fully-qualified-syms ctx (utils/eval-string* "(ns-name *ns*)"))
+		        _ (.WriteLine System.Console/Error (pr-str "complete: query = " query))
+				_ (.WriteLine System.Console/Error (pr-str "complete: query-ns = " query-ns))
+				_ (.WriteLine System.Console/Error (pr-str "complete: ns-name = " (ns-name *ns*)))
+				_ (.WriteLine System.Console/Error (pr-str "complete: ns-name = " (utils/eval-string* "(ns-name *ns*)")))
+                from-current-ns (fully-qualified-syms ctx (utils/eval-string* "(ns-name *ns*)"))		
                 from-current-ns (map (fn [sym]
                                        [(namespace sym) (name sym) :unqualified])
                                      from-current-ns)
-                alias->ns (utils/eval-string* ctx "(let [m (ns-aliases *ns*)] (zipmap (keys m) (map ns-name (vals m))))")
+				_ (.WriteLine System.Console/Error (pr-str "complete: from-current-ns = " from-current-ns)) 
+                alias->ns (utils/eval-string* "(let [m (ns-aliases *ns*)] (zipmap (keys m) (map ns-name (vals m))))")
                 ns->alias (zipmap (vals alias->ns) (keys alias->ns))
+				_ (.WriteLine System.Console/Error (pr-str "complete: alias->ns = " ns->alias))
                 from-aliased-nss (doall (mapcat
                                          (fn [alias]
                                            (let [ns (get alias->ns alias)
@@ -225,11 +242,15 @@
                                                     [(str ns) (str sym) :qualified])
                                                   syms)))
                                          (keys alias->ns)))
+				_ (.WriteLine System.Console/Error (pr-str "complete: from-aliased-nss = " from-aliased-nss))
                 all-namespaces (->> (utils/eval-string* (format "(all-ns)"))
                                     (map (fn [ns]
                                            [(str ns) nil :qualified])))
+				_ (.WriteLine System.Console/Error (pr-str "complete: all-namespaces = " all-namespaces))						   
                 from-imports (when query-ns (ns-imports->completions ctx (symbol query-ns) query))
+				_ (.WriteLine System.Console/Error (pr-str "complete: from-imports = " from-imports))
                 ns-found? (utils/eval-string* (format "(find-ns '%s)" query-ns))
+				_ (.WriteLine System.Console/Error (pr-str "complete: ns-found? = " ns-found?))
                 fully-qualified-names (when-not from-imports
                                         (when (and has-namespace? ns-found?)
                                           (let [ns (get alias->ns query-ns query-ns)
@@ -237,21 +258,31 @@
                                             (map (fn [sym]
                                                    [(str ns) (str sym) :qualified])
                                                  syms))))
+			    _ (.WriteLine System.Console/Error (pr-str "complete: fully-qualified-names = " fully-qualified-names))
                 svs (concat from-current-ns from-aliased-nss all-namespaces fully-qualified-names)
+			    _ (.WriteLine System.Console/Error (pr-str "complete: svs = " svs))		
+				_ (.WriteLine System.Console/Error (pr-str "complete: about to do matching "))					
                 completions (keep (fn [entry]
                                     (match alias->ns ns->alias query entry))
                                   svs)
+				_ (.WriteLine System.Console/Error (pr-str "complete: completions0 = " completions))				  
                 completions (concat completions from-imports)
-                import-symbols (import-symbols->completions (:imports @(:env ctx)) query)
-                completions (concat completions import-symbols)
+				_ (.WriteLine System.Console/Error (pr-str "complete: completions1 = " completions))					
+                ;;import-symbols (import-symbols->completions (:imports @(:env ctx)) query)
+				;;_ (.WriteLine System.Console/Error (pr-str "complete: import-symbols = " import-symbols))					
+                ;;completions (concat completions import-symbols)
+				;;_ (.WriteLine System.Console/Error (pr-str "complete: completions2 = " completions))	
                 completions (->> (map (fn [[namespace name type]]
                                         (cond->
                                             {"candidate" (str name)}
                                             namespace (assoc "ns" (str namespace))
                                             type (assoc "type" (str type))))
                                       completions)
-                                 set)]
+                                 set)
+				_ (.WriteLine System.Console/Error (pr-str "complete: completions3 = " completions))		
+				]
             (when (:debug opts) (prn "completions" completions))
+			(.WriteLine System.Console/Error (pr-str "complete: completions4 = " completions))
             (rf result
                 {:response-for msg
                  :response {"completions" completions
@@ -260,7 +291,7 @@
           (rf result
               {:response-for msg
                :response {"status" #{"done"}}
-               :opts opts})))
+               :opts opts}))))
     (catch Exception e
       (println e)
       (rf result
@@ -416,7 +447,7 @@
 
 (defn session-loop [rf is os {:keys [ctx opts id] :as m} ]
   (when (:debug opts) (println "Reading!" id))
-  (.WriteLine System.Console/Error (pr-str "Reading! " id ", *ns* = " *ns*))
+  (.WriteLine System.Console/Error (pr-str "Reading! " id ", *ns* = " (str *ns*)))
   (when-let [msg (try (read-bencode is)
                       (catch EndOfStreamException _
                         (when-not (:quiet opts)
