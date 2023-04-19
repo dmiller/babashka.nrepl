@@ -86,48 +86,59 @@
                      (:file-name msg))
                  (:file msg))
           reader (utils/reader code-str)
-          ns-str (get msg :ns)
-          sci-ns (if ns-str (the-sci-ns (symbol ns-str)) *ns*)
+		  ns-str (:ns msg)
+          explicit-ns (and ns-str (-> ns-str symbol find-ns))		  
           nrepl-pprint (:nrepl.middleware.print/print msg)
           _ (when (:debug opts)
               (prn :msg msg))
           err-pw (make-writer rf result msg "err")
           out-pw (make-writer rf result msg "out")]
-      (when debug (println "current ns" (str *ns*)))
-	  (binding [*out* out-pw 
-	            *err* err-pw
-				*ns* sci-ns]
-        (let [last-val
-              (loop [last-val nil]
-                (let [form (utils/parse-next #_ctx reader)
-                      eof? (identical? utils/eof form)]
-				  (.WriteLine System.Console/Error (pr-str "eval-msg loop:" form ", " eof?))	  
-                  (if-not eof?
-                    (let [value (when-not eof?
-                                  (let [result (eval form)]
-                                    (.Flush ^TextWriter out-pw)
-                                    (.Flush ^TextWriter err-pw)
-                                    result))]
-                      (when-not load-file?
-                        (set! *3 *2)
-                        (set! *2 *1)
-                        (set! *1 value)
-                        (rf result
-                            {:response-for msg
-                             :response {"ns" (str *ns*)
-                                        "value" (format-value nrepl-pprint debug value msg)}
-                             :opts opts}))
-                      (recur value))
-                    last-val)))]
-          (when load-file?
-            (rf result
-                {:response-for msg
-                 :response {"value" (format-value nrepl-pprint debug last-val msg)}
-                 :opts opts}))))
-      (rf result
-          {:response-for msg
-           :response {"status" #{"done"}}
-           :opts opts}))
+		  
+      (when debug 
+	     (println "current ns" (str *ns*))
+	     (when ns-str (println "Given ns " ns-str (if explicit-ns " found" " not found"))))
+		 
+	  (if (and ns-str (not explicit-ns))
+	    (rf result
+            {:response-for msg
+             :response {"status" #{"done" "error" "namespace-not-found"} "ns" ns-str}
+             :opts opts})
+	    (do 
+		  (with-bindings (cond-> {#'*out* out-pw
+                                  #'*err* err-pw}
+		   		           ns-str (assoc #'*ns* explicit-ns)
+			  		       file (assoc #'*file* file))								
+            (let [last-val
+                  (loop [last-val nil]
+                   (let [form (utils/parse-next #_ctx reader)
+                         eof? (identical? utils/eof form)]
+				     (.WriteLine System.Console/Error (pr-str "eval-msg loop:" form ", " *ns*))	  
+                     (if-not eof?
+                       (let [value (when-not eof?
+                                     (let [result (eval form)]
+                                       (.Flush ^TextWriter out-pw)
+                                       (.Flush ^TextWriter err-pw)
+                                       result))]
+                         (when-not load-file?
+                           (set! *3 *2)
+                           (set! *2 *1)
+                           (set! *1 value)
+                           (rf result
+                               {:response-for msg
+                                :response {"ns" (str *ns*)
+                                           "value" (format-value nrepl-pprint debug value msg)}
+                                :opts opts}))
+                        (recur value))
+                      last-val)))]
+             (when load-file?
+               (rf result
+                  {:response-for msg
+                   :response {"value" (format-value nrepl-pprint debug last-val msg)}
+                   :opts opts}))))
+          (rf result
+              {:response-for msg
+               :response {"status" #{"done"}}
+               :opts opts}))))
     (catch Exception ex
       (set! *e ex)
       (rf result
@@ -357,9 +368,7 @@
   (close-session rf result m))
 
 (defmethod process-msg :eval [rf result m]
-  (let [x  (eval-msg rf result m)]
-    (.WriteLine System.Console/Error (pr-str "process-message :eval returns " x))
-	x))
+  (eval-msg rf result m))
 
 (defmethod process-msg :load-file [rf result {:keys [ctx msg opts] :as m}]
   (let [file (:file msg)
@@ -407,7 +416,7 @@
 
 (defn session-loop [rf is os {:keys [ctx opts id] :as m} ]
   (when (:debug opts) (println "Reading!" id))
-  (.WriteLine System.Console/Error (pr-str "Reading! " id))
+  (.WriteLine System.Console/Error (pr-str "Reading! " id ", *ns* = " *ns*))
   (when-let [msg (try (read-bencode is)
                       (catch EndOfStreamException _
                         (when-not (:quiet opts)
@@ -440,7 +449,8 @@
                 *2 nil
                 *3 nil
                 *e nil
-				*ns* (create-ns 'user)]
+				*ns* *ns*
+				*file* *file*]
           (session-loop rf in out {:opts opts
                                    :id "pre-init"
                                    :ctx ctx})))
