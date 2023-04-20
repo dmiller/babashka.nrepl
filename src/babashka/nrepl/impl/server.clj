@@ -443,12 +443,14 @@
         rf (xform send-reduce)]
     (when debug (println "Connected."))
     (future
-      (binding [*1 nil
-                *2 nil
-                *3 nil
-                *e nil
-				*ns* *ns*
-				*file* *file*]
+      (with-bindings 
+	    (merge {#'*1 nil
+                #'*2 nil
+                #'*3 nil
+                #'*e nil
+				#'*ns* (create-ns 'user)
+				#'*file* *file*}
+			   (zipmap thread-bind (map var-get thread-bind)))
           (session-loop rf in out {:opts opts
                                    :id "pre-init"
                                    :ctx ctx})))
