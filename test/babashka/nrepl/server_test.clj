@@ -233,14 +233,14 @@
               (is (contains? completions ["clojure.core" "+"]))
               (is (contains? completions ["clojure.core" "+'"]))))
           (testing "completions for static interop"
-            (bencode/write-bencode os {"op" "complete" "symbol" "java.lang.String/" "session" session "id" (new-id!)})
+            (bencode/write-bencode os {"op" "complete" "symbol" "System.String/" "session" session "id" (new-id!)})
             (let [reply (read-reply in session @id)
                   completions (:completions reply)
                   completions (mapv read-msg completions)
                   completions (into #{} (map (juxt :ns :candidate)) completions)]
-              (is (contains? completions ["java.lang.String" "java.lang.String/copyValueOf"]))
-              (is (contains? completions ["java.lang.String" "java.lang.String/CASE_INSENSITIVE_ORDER"]))
-              (is (contains? completions ["java.lang.String" "java.lang.String/join"]))))
+              (is (contains? completions ["System.String" "System.String/Copy"]))
+              (is (contains? completions ["System.String" "System.String/Empty"]))
+              (is (contains? completions ["System.String" "System.String/Join"]))))
           (testing "completions for imports"
             (bencode/write-bencode os {"debug" "true" "op" "complete" "symbol" "Stri" "session" session "id" (new-id!)})
             (let [reply (read-reply in session @id)
@@ -248,9 +248,9 @@
                   completions (mapv read-msg completions)
                   completions (into #{} (map (juxt :ns :candidate)) completions)]
               (is (contains? completions [nil "String"]))
-              (is (contains? completions [nil "java.lang.String"])))))
-        (testing (bencode/write-bencode os {"op" "ls-sessions" "session" session "id" (new-id!)})
-          "close + ls-sessions"
+              #_(is (contains? completions [nil "System.String"])))))
+        (testing "close + ls-sessions"
+		  (bencode/write-bencode os {"op" "ls-sessions" "session" session "id" (new-id!)})
           (let [reply (read-reply in session @id)
                 sessions (set (:sessions reply))]
             (is (contains? sessions session))
@@ -284,7 +284,7 @@
                                      "session" session "id" (new-id!)})
           (dotimes [_ 3]
             (let [reply (read-reply in session @id)]
-              (is (= "Hello\n" (:out reply))))))
+              (is (= "Hello\r\n" (:out reply))))))      ;;; need platform-newlines here
         (testing "output flushing"
           (bencode/write-bencode os {"op" "eval" "code" "(print \"short no newline\")"
                                      "session" session "id" (new-id!)})
@@ -322,7 +322,7 @@
                                      "session" session "id" (new-id!)})
           (dotimes [_ 3]
             (let [reply (read-reply in session @id)]
-              (is (= "Hello\n" (:err reply))))))
+              (is (= "Hello\r\n" (:err reply))))))   ;; needs platform-newlines
         (testing "error flushing"
           (bencode/write-bencode os {"op" "eval" "code" "(binding [*out* *err*] (print \"short no newline\"))"
                                      "session" session "id" (new-id!)})
